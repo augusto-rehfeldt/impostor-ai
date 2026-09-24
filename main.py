@@ -4,13 +4,16 @@ from openai import OpenAI
 
 # ponytail: SDK retries replace the hand-rolled wrapper; ask() keeps model/reasoning config in one place
 api_key_path = Path(__file__).parent / "api_key.txt"
-client = OpenAI(api_key=open(api_key_path).read().strip(), max_retries=3)
+client = None
 
 MODEL = "gpt-5.4-mini"
 REASONING = {"effort": "low", "summary": "auto"}
 
 
 def ask(prompt):
+    global client
+    if client is None:
+        client = OpenAI(api_key=api_key_path.read_text().strip(), max_retries=3)
     return client.responses.create(model=MODEL, input=prompt, reasoning=REASONING)
 
 
@@ -334,8 +337,7 @@ class Game:
 
         # Reveal truth
         if voted_out_player.is_impostor:
-            print(f"✅ It was {voted_out_name}! The IMPOSTOR was caught!")
-            return True, "crew_win"
+            print(f"✅ It was {voted_out_name}! An IMPOSTOR was caught!")
         else:
             print(f"⚠️ {voted_out_name} was innocent. The game continues...")
 
@@ -427,6 +429,8 @@ def play_again(scores):
 
 
 def main():
+    if not api_key_path.exists():
+        raise SystemExit(f"Missing {api_key_path}: put your OpenAI API key there.")
     scores = {"crew": 0, "impostor": 0}
 
     print("🎭 IMPOSTOR - A Deduction Game 🎭")
