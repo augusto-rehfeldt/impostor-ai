@@ -245,9 +245,9 @@ class Game:
 
     def play_round(self):
         """Play one round of the game."""
-        self.round_number += 1
-        if self.round_number > self.max_rounds:
+        if self.round_number >= self.max_rounds:
             return True, "max_rounds"
+        self.round_number += 1
 
         print(f"\n{'=' * 50}")
         print(f"📍 ROUND {self.round_number}")
@@ -388,10 +388,8 @@ class Game:
 
             if outcome in ("crew_win", "impostor_win"):
                 break
-
-            if outcome == "impostor_win":
-                print("\n😈 IMPOSTOR WINS!")
-                break
+            if self.round_number >= self.max_rounds:
+                continue  # next play_round reports max_rounds; no prompt needed
 
             print("\nPress Enter to continue to the next round...")
             input()

@@ -158,6 +158,17 @@ class RoundTests(unittest.TestCase):
         game = make_game()
         game.round_number = game.max_rounds
         self.assertEqual(quiet(game.play_round), (True, "max_rounds"))
+        self.assertEqual(game.round_number, game.max_rounds)  # summary reports rounds actually played
+
+    def test_no_continue_prompt_after_last_round(self):
+        game = make_game(impostors={"Alice"})
+        with mock.patch.object(main.Player, "say_word", return_value=("w", None)), \
+             mock.patch.object(main.Player, "vote", return_value=("SKIP", None)), \
+             mock.patch.object(main.Game, "pick_most_suspicious", return_value=None), \
+             mock.patch("builtins.input", return_value="") as prompt:
+            quiet(game.start_game)
+        self.assertEqual(game.round_number, game.max_rounds)
+        self.assertEqual(prompt.call_count, game.max_rounds - 1)
 
     def test_pick_most_suspicious(self):
         game = make_game()
