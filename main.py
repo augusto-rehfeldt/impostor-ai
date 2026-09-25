@@ -1,27 +1,32 @@
+import os
 import random
+import sys
 from pathlib import Path
-from openai import OpenAI
 
-# ponytail: SDK retries replace the hand-rolled wrapper; ask() keeps model/reasoning config in one place
-api_key_path = Path(__file__).parent / "api_key.txt"
-client = None
+# Models come from book writer's shared AI suite, like mathforge and music writer:
+# the same provider/model menu, credentials, retries and usage-limit handling.
+HERE = Path(__file__).resolve().parent
+BOOK_WRITER = Path(os.getenv("IMPOSTOR_BOOK_WRITER") or HERE.parent / "book writer")
+service = None
 
-MODEL = "gpt-5.4-mini"
-REASONING = {"effort": "low", "summary": "auto"}
+
+def connect():
+    """Pick provider and model with book writer's menu (remembered per script) and build its AIService."""
+    global service
+    sys.path.insert(0, str(BOOK_WRITER))
+    from ai_book_creator.cli import choose_ai
+    from ai_book_creator.services.ai_service import AIService
+
+    interactive = sys.stdin.isatty()
+    _, config, _ = choose_ai(None, "review" if interactive else "auto",
+                             state_file=HERE / "provider_state.json")
+    service = AIService(config_path=config, allow_auth_prompt=interactive)
+    return service
 
 
 def ask(prompt):
-    global client
-    if client is None:
-        client = OpenAI(api_key=api_key_path.read_text().strip(), max_retries=3)
-    return client.responses.create(model=MODEL, input=prompt, reasoning=REASONING)
-
-
-def extract_reasoning(response):
-    for item in response.output:
-        if item.type == "reasoning" and item.summary:
-            return item.summary[0].text
-    return None
+    return (service or connect()).generate_content(prompt, model_type="writing",
+                                                   max_retries=2, wait_for_limits=False).strip()
 
 
 def tally(game):
@@ -61,13 +66,10 @@ class Player:
             )
 
         try:
-            response = ask(prompt)
-            word = response.output_text.strip().split()[0].lower()
-            thought_bubble = extract_reasoning(response)
-            return word, thought_bubble
+            return ask(prompt).split()[0].lower()
         except Exception as e:
-            print(f"   [Error: {e}]")
-            return "hmm", None
+            print(f"   [Error: {e or 'empty reply'}]")
+            return "hmm"
 
     def defend(self, game_context):
         """Impostor or accused player can defend themselves."""
@@ -92,13 +94,10 @@ class Player:
             )
 
         try:
-            response = ask(prompt)
-            thought_bubble = response.output_text.strip()
-            thought = extract_reasoning(response)
-            return thought_bubble, thought
+            return ask(prompt) or "I am innocent!"
         except Exception as e:
             print(f"   [Error: {e}]")
-            return "I am innocent!", None
+            return "I am innocent!"
 
     def vote(self, players, game_context, can_skip=True):
         """Each player votes for who they think is the impostor."""
@@ -129,17 +128,14 @@ class Player:
             )
 
         try:
-            response = ask(prompt)
-            voted_player_name = response.output_text.strip()
+            voted_player_name = ask(prompt)
             # Validate vote
             if voted_player_name not in player_names:
                 voted_player_name = random.choice(player_names)
-
-            thought = extract_reasoning(response)
-            return voted_player_name, thought
+            return voted_player_name
         except Exception as e:
             print(f"   [Error: {e}]")
-            return random.choice(player_names), None
+            return random.choice(player_names)
 
 
 CATEGORIES = {
@@ -264,12 +260,9 @@ class Game:
                 continue
 
             print(f"[{player.name}'s turn]")
-            word, thought = player.say_word(game_context)
+            word = player.say_word(game_context)
             player.word_said = word
             game_context["words_said"][player.name] = word
-
-            if thought:
-                print(f"   💭 {thought}")
             print()
 
         self.display_status()
@@ -281,9 +274,7 @@ class Game:
         accused = self.pick_most_suspicious(game_context)
         if accused and not accused.was_voted_out:
             print(f"🔔 {accused.name} is being questioned!")
-            defense, thought = accused.defend(game_context)
-            if thought:
-                print(f"   💭 {thought}")
+            defense = accused.defend(game_context)
             print(f"   🗣️  {accused.name} says: \"{defense}\"")
 
         # Phase 3: Voting
@@ -297,15 +288,13 @@ class Game:
             if player.was_voted_out:
                 continue
 
-            voted_name, thought = player.vote(self.players, game_context)
+            voted_name = player.vote(self.players, game_context)
             player.vote_history.append(voted_name)
 
             if voted_name == "SKIP":
                 print(f"[{player.name}] → SKIP")
             else:
                 print(f"[{player.name}] → votes for {voted_name}")
-                if thought:
-                    print(f"   💭 {thought}")
 
             votes[voted_name] = votes.get(voted_name, 0) + 1
             vote_details[player.name] = voted_name
@@ -365,10 +354,9 @@ class Game:
         )
 
         try:
-            response = ask(prompt)
-            name = response.output_text.strip()
+            name = ask(prompt)
             return next((p for p in self.players if p.name == name), None)
-        except:
+        except Exception:
             return None
 
     def start_game(self):
@@ -427,8 +415,7 @@ def play_again(scores):
 
 
 def main():
-    if not api_key_path.exists():
-        raise SystemExit(f"Missing {api_key_path}: put your OpenAI API key there.")
+    connect()  # provider/model menu first, so a missing credential stops before game setup
     scores = {"crew": 0, "impostor": 0}
 
     print("🎭 IMPOSTOR - A Deduction Game 🎭")

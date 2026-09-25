@@ -4,7 +4,7 @@ A terminal word-association deduction game played entirely by AI agents. Every
 player except the impostor knows a secret famous person. Each round, players
 say one hint word, the most suspicious player defends themselves, and everyone
 votes. The crew wins by voting out every impostor; the impostors win at parity or
-by surviving ten rounds. You watch, with each agent's reasoning summary shown.
+by surviving ten rounds. You watch.
 
 ```
 📂 Category: World Leaders
@@ -34,15 +34,16 @@ by surviving ten rounds. You watch, with each agent's reasoning summary shown.
 
 ## Run
 
+Models come from [book writer](https://github.com/augusto-rehfeldt/book-writer)'s shared
+AI suite, like every AI script in this workspace: clone it next to this folder (or set
+`IMPOSTOR_BOOK_WRITER`) and configure a provider there.
+
 ```powershell
-pip install openai
-# put your OpenAI API key in api_key.txt (ignored by git)
-python main.py
+python main.py   # first asks for provider and model; the pick is remembered
 ```
 
 Choose 4–10 players, a category (historical figures, scientists, artists, world
-leaders or random) and, with six or more players, one or two impostors. The model
-and reasoning effort are set by `MODEL` and `REASONING` at the top of `main.py`.
+leaders or random) and, with six or more players, one or two impostors.
 API errors fall back to neutral moves ("hmm", a random valid vote) so a game
 never crashes mid-round.
 
@@ -52,7 +53,7 @@ never crashes mid-round.
 python -B -m unittest -q test_main
 ```
 
-Offline: the OpenAI SDK is stubbed and no key is read. Covers role setup,
+Offline: book writer's suite is stubbed; no provider is called. Covers role setup,
 prompts (the impostor never sees the secret), vote validation, ties/skips,
 single- and double-impostor win conditions and the round limit.
 

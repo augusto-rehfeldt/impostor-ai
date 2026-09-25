@@ -1,4 +1,4 @@
-"""Offline unit tests for Impostor; the OpenAI SDK and API key are never touched.
+"""Offline unit tests for Impostor; book writer's shared AI suite is stubbed.
 
 Run from this directory: python -B -m unittest -q test_main
 """
@@ -6,20 +6,13 @@ import contextlib
 import io
 import random
 import sys
-import types
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
-sys.modules.setdefault("openai", types.SimpleNamespace(OpenAI=mock.Mock()))
+sys.modules["openai"] = None  # the game must not use a provider SDK directly
 import main  # noqa: E402
 
 NAMES = ["Alice", "Bob", "Charlie", "David", "Eve"]
-
-
-def reply(text, reasoning=None):
-    output = [SimpleNamespace(type="reasoning", summary=[SimpleNamespace(text=reasoning)])] if reasoning else []
-    return SimpleNamespace(output_text=text, output=output)
 
 
 def quiet(fn, *args, **kwargs):
@@ -39,33 +32,67 @@ def make_game(num_impostors=1, impostors=None):
 
 def rigged_round(game, target):
     """Play one round where everyone votes for `target`."""
-    with mock.patch.object(main.Player, "say_word", return_value=("word", None)), \
-         mock.patch.object(main.Player, "vote", return_value=(target, None)), \
+    with mock.patch.object(main.Player, "say_word", return_value="word"), \
+         mock.patch.object(main.Player, "vote", return_value=target), \
          mock.patch.object(main.Game, "pick_most_suspicious", return_value=None):
         return quiet(game.play_round)
 
 
-class ImportTests(unittest.TestCase):
-    def test_import_does_not_build_client(self):
-        import importlib
-        sdk = sys.modules["openai"]
-        sdk.OpenAI.reset_mock()
-        importlib.reload(main)
-        sdk.OpenAI.assert_not_called()
+def fake_book_writer(choose_ai, ai_service):
+    """sys.modules entries standing in for book writer's ai_book_creator package."""
+    return {"ai_book_creator": mock.Mock(),
+            "ai_book_creator.cli": mock.Mock(choose_ai=choose_ai),
+            "ai_book_creator.services": mock.Mock(),
+            "ai_book_creator.services.ai_service": mock.Mock(AIService=ai_service)}
 
 
-class StartupTests(unittest.TestCase):
-    def test_missing_api_key_exits_with_message(self):
-        with mock.patch.object(main, "api_key_path", main.Path("no-such-dir") / "api_key.txt"),              mock.patch("builtins.input", side_effect=AssertionError("prompted")):
-            with self.assertRaisesRegex(SystemExit, "api_key.txt"):
+class SharedSuiteTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, main, "service", None)
+
+    def test_connect_uses_book_writer_menu_and_service(self):
+        choose_ai = mock.Mock(return_value=("hyper", "cfg.json", ["m"]))
+        ai_service = mock.Mock()
+        with mock.patch.dict(sys.modules, fake_book_writer(choose_ai, ai_service)), \
+             mock.patch.object(sys, "path", list(sys.path)):
+            self.assertIs(quiet(main.connect), ai_service.return_value)
+            self.assertIn(str(main.BOOK_WRITER), sys.path)
+        self.assertEqual(choose_ai.call_args.kwargs["state_file"], main.HERE / "provider_state.json")
+        self.assertEqual(ai_service.call_args.kwargs["config_path"], "cfg.json")
+        self.assertIs(main.service, ai_service.return_value)
+
+    def test_ask_returns_generated_text(self):
+        main.service = mock.Mock(**{"generate_content.return_value": "  Hat \n"})
+        self.assertEqual(main.ask("prompt"), "Hat")
+        # A turn fails fast; the callers fall back to a neutral move instead of stalling for hours.
+        main.service.generate_content.assert_called_once_with("prompt", model_type="writing",
+                                                              max_retries=2, wait_for_limits=False)
+
+    def test_ask_connects_once_on_first_use(self):
+        shared = mock.Mock(**{"generate_content.return_value": "x"})
+
+        def connect():
+            main.service = shared
+            return shared
+        with mock.patch.object(main, "connect", side_effect=connect) as patched:
+            main.ask("a")
+            main.ask("b")
+        patched.assert_called_once()
+
+    def test_main_picks_provider_before_setup_questions(self):
+        order = []
+
+        def stop(*args):
+            order.append("input")
+            raise KeyboardInterrupt
+        with mock.patch.object(main, "connect", side_effect=lambda: order.append("connect")), \
+             mock.patch("builtins.input", side_effect=stop):
+            with self.assertRaises(KeyboardInterrupt):
                 quiet(main.main)
+        self.assertEqual(order, ["connect", "input"])
 
 
 class HelperTests(unittest.TestCase):
-    def test_extract_reasoning(self):
-        self.assertEqual(main.extract_reasoning(reply("x", "because")), "because")
-        self.assertIsNone(main.extract_reasoning(reply("x")))
-
     def test_tally(self):
         game = make_game(impostors={"Alice"})
         self.assertEqual(main.tally(game), "impostor")
@@ -93,33 +120,37 @@ class PlayerTests(unittest.TestCase):
     ctx = {"secret_person": "Lincoln", "words_said": {"Bob": "hat"}}
 
     def test_say_word_takes_first_word_lowercase(self):
-        with mock.patch.object(main, "ask", return_value=reply("Stovepipe hat", "tall")) as ask:
-            self.assertEqual(main.Player("A", secret_person="Lincoln").say_word(self.ctx), ("stovepipe", "tall"))
+        with mock.patch.object(main, "ask", return_value="Stovepipe hat") as ask:
+            self.assertEqual(main.Player("A", secret_person="Lincoln").say_word(self.ctx), "stovepipe")
         self.assertIn("Lincoln", ask.call_args.args[0])
 
     def test_impostor_prompt_hides_secret(self):
-        with mock.patch.object(main, "ask", return_value=reply("hat")) as ask:
+        with mock.patch.object(main, "ask", return_value="hat") as ask:
             main.Player("A", is_impostor=True).say_word(self.ctx)
         self.assertNotIn("Lincoln", ask.call_args.args[0])
 
     def test_api_errors_fall_back(self):
         player = main.Player("A", secret_person="Lincoln")
         with mock.patch.object(main, "ask", side_effect=RuntimeError("down")):
-            self.assertEqual(quiet(player.say_word, self.ctx), ("hmm", None))
-            self.assertEqual(quiet(player.defend, self.ctx), ("I am innocent!", None))
+            self.assertEqual(quiet(player.say_word, self.ctx), "hmm")
+            self.assertEqual(quiet(player.defend, self.ctx), "I am innocent!")
             players = [player, main.Player("B")]
-            self.assertIn(quiet(player.vote, players, self.ctx)[0], {"B", "SKIP"})
+            self.assertIn(quiet(player.vote, players, self.ctx), {"B", "SKIP"})
+
+    def test_empty_reply_falls_back(self):
+        with mock.patch.object(main, "ask", return_value=""):
+            self.assertEqual(quiet(main.Player("A", secret_person="Lincoln").say_word, self.ctx), "hmm")
 
     def test_vote_is_validated(self):
         players = [main.Player(n) for n in ("A", "B", "C")]
         players[2].was_voted_out = True
-        with mock.patch.object(main, "ask", return_value=reply("B")):
-            self.assertEqual(players[0].vote(players, self.ctx)[0], "B")
+        with mock.patch.object(main, "ask", return_value="B"):
+            self.assertEqual(players[0].vote(players, self.ctx), "B")
         for invalid in ("A", "C", "Zed"):  # self, eliminated, unknown
-            with mock.patch.object(main, "ask", return_value=reply(invalid)):
-                self.assertIn(players[0].vote(players, self.ctx)[0], {"B", "SKIP"})
-        with mock.patch.object(main, "ask", return_value=reply("Zed")):
-            self.assertEqual(players[0].vote(players, self.ctx, can_skip=False)[0], "B")
+            with mock.patch.object(main, "ask", return_value=invalid):
+                self.assertIn(players[0].vote(players, self.ctx), {"B", "SKIP"})
+        with mock.patch.object(main, "ask", return_value="Zed"):
+            self.assertEqual(players[0].vote(players, self.ctx, can_skip=False), "B")
 
 
 class RoundTests(unittest.TestCase):
@@ -148,8 +179,8 @@ class RoundTests(unittest.TestCase):
         game = make_game(impostors={"Alice"})
         self.assertEqual(rigged_round(game, "SKIP"), (False, "skip"))
         votes = iter(["Alice", "Bob", "Alice", "Bob", "SKIP"])
-        with mock.patch.object(main.Player, "say_word", return_value=("w", None)), \
-             mock.patch.object(main.Player, "vote", side_effect=lambda *a, **k: (next(votes), None)), \
+        with mock.patch.object(main.Player, "say_word", return_value="w"), \
+             mock.patch.object(main.Player, "vote", side_effect=lambda *a, **k: next(votes)), \
              mock.patch.object(main.Game, "pick_most_suspicious", return_value=None):
             self.assertEqual(quiet(game.play_round), (False, "tie"))
         self.assertFalse(any(p.was_voted_out for p in game.players))
@@ -162,8 +193,8 @@ class RoundTests(unittest.TestCase):
 
     def test_no_continue_prompt_after_last_round(self):
         game = make_game(impostors={"Alice"})
-        with mock.patch.object(main.Player, "say_word", return_value=("w", None)), \
-             mock.patch.object(main.Player, "vote", return_value=("SKIP", None)), \
+        with mock.patch.object(main.Player, "say_word", return_value="w"), \
+             mock.patch.object(main.Player, "vote", return_value="SKIP"), \
              mock.patch.object(main.Game, "pick_most_suspicious", return_value=None), \
              mock.patch("builtins.input", return_value="") as prompt:
             quiet(game.start_game)
@@ -172,7 +203,7 @@ class RoundTests(unittest.TestCase):
 
     def test_pick_most_suspicious(self):
         game = make_game()
-        with mock.patch.object(main, "ask", return_value=reply("Eve")):
+        with mock.patch.object(main, "ask", return_value="Eve"):
             self.assertEqual(game.pick_most_suspicious({}).name, "Eve")
         with mock.patch.object(main, "ask", side_effect=RuntimeError):
             self.assertIsNone(game.pick_most_suspicious({}))
