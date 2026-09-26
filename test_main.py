@@ -1,4 +1,4 @@
-"""Offline unit tests for Impostor; book writer's shared AI suite is stubbed.
+"""Offline unit tests for Impostor; the shared ai_suite package is stubbed.
 
 Run from this directory: python -B -m unittest -q test_main
 """
@@ -38,25 +38,22 @@ def rigged_round(game, target):
         return quiet(game.play_round)
 
 
-def fake_book_writer(choose_ai, ai_service):
-    """sys.modules entries standing in for book writer's ai_book_creator package."""
-    return {"ai_book_creator": mock.Mock(),
-            "ai_book_creator.cli": mock.Mock(choose_ai=choose_ai),
-            "ai_book_creator.services": mock.Mock(),
-            "ai_book_creator.services.ai_service": mock.Mock(AIService=ai_service)}
+def fake_suite(choose_ai, ai_service):
+    """sys.modules entry standing in for the shared ai_suite package."""
+    return {"ai_suite": mock.Mock(choose_ai=choose_ai, AIService=ai_service)}
 
 
 class SharedSuiteTests(unittest.TestCase):
     def setUp(self):
         self.addCleanup(setattr, main, "service", None)
 
-    def test_connect_uses_book_writer_menu_and_service(self):
+    def test_connect_uses_the_suite_menu_and_service(self):
         choose_ai = mock.Mock(return_value=("hyper", "cfg.json", ["m"]))
         ai_service = mock.Mock()
-        with mock.patch.dict(sys.modules, fake_book_writer(choose_ai, ai_service)), \
+        with mock.patch.dict(sys.modules, fake_suite(choose_ai, ai_service)), \
              mock.patch.object(sys, "path", list(sys.path)):
             self.assertIs(quiet(main.connect), ai_service.return_value)
-            self.assertIn(str(main.BOOK_WRITER), sys.path)
+            self.assertEqual(str(main.AI_SUITE) in sys.path, main.AI_SUITE.is_dir())
         self.assertEqual(choose_ai.call_args.kwargs["state_file"], main.HERE / "provider_state.json")
         self.assertEqual(ai_service.call_args.kwargs["config_path"], "cfg.json")
         self.assertIs(main.service, ai_service.return_value)

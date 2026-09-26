@@ -34,9 +34,9 @@ by surviving ten rounds. You watch.
 
 ## Run
 
-Models come from [book writer](https://github.com/augusto-rehfeldt/book-writer)'s shared
-AI suite, like every AI script in this workspace: clone it next to this folder (or set
-`IMPOSTOR_BOOK_WRITER`) and configure a provider there.
+Models come from the shared [ai-suite](https://github.com/augusto-rehfeldt/ai-suite)
+package, like every AI script in this workspace: clone it next to this folder (or set
+`AI_SUITE_DIR`) and configure a provider there.
 
 ```powershell
 python main.py   # first asks for provider and model; the pick is remembered
@@ -53,7 +53,7 @@ never crashes mid-round.
 python -B -m unittest -q test_main
 ```
 
-Offline: book writer's suite is stubbed; no provider is called. Covers role setup,
+Offline: the ai_suite package is stubbed; no provider is called. Covers role setup,
 prompts (the impostor never sees the secret), vote validation, ties/skips,
 single- and double-impostor win conditions and the round limit.
 

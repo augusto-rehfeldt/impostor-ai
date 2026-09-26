@@ -3,19 +3,19 @@ import random
 import sys
 from pathlib import Path
 
-# Models come from book writer's shared AI suite, like mathforge and music writer:
+# Models come from the shared ai-suite package, like mathforge and music writer:
 # the same provider/model menu, credentials, retries and usage-limit handling.
 HERE = Path(__file__).resolve().parent
-BOOK_WRITER = Path(os.getenv("IMPOSTOR_BOOK_WRITER") or HERE.parent / "book writer")
+AI_SUITE = Path(os.getenv("AI_SUITE_DIR") or HERE.parent / "ai-suite")
 service = None
 
 
 def connect():
-    """Pick provider and model with book writer's menu (remembered per script) and build its AIService."""
+    """Pick provider and model with the shared menu (remembered per script) and build its AIService."""
     global service
-    sys.path.insert(0, str(BOOK_WRITER))
-    from ai_book_creator.cli import choose_ai
-    from ai_book_creator.services.ai_service import AIService
+    if AI_SUITE.is_dir():
+        sys.path.insert(0, str(AI_SUITE))
+    from ai_suite import AIService, choose_ai
 
     interactive = sys.stdin.isatty()
     _, config, _ = choose_ai(None, "review" if interactive else "auto",
